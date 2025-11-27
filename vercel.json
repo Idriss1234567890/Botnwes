@@ -2,22 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/webhook.js",
+      "src": "index.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      // هذا التوجيه يحول كل الطلبات على مسار /api/webhook 
-      // إلى الملف api/webhook.js الذي يحتوي على الدالة الخاصة بك.
-      "src": "/api/webhook",
-      "dest": "/api/webhook.js"
+      "src": "/(.*)",
+      "dest": "/index.js"
     }
-  ],
-  // **متغيرات البيئة (مهم جداً)**
-  // يجب عليك تعيين هذه المتغيرات في إعدادات مشروعك على Vercel للحماية.
-  "env": {
-    "VERIFY_TOKEN": "@vercel_verify_token",
-    "PAGE_ACCESS_TOKEN": "@vercel_page_access_token"
-  }
+  ]
 }
