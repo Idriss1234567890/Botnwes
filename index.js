@@ -1,156 +1,195 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const axios = require('axios');
+import express from "express";
+import axios from "axios";
+import cheerio from "cheerio";
+import bodyParser from "body-parser";
+import dotenv from "dotenv";
 
-// يجب تعريف هذه المتغيرات في إعدادات البيئة (Environment Variables) في Vercel
+dotenv.config();
+
+const app = express();
+app.use(bodyParser.json());
+
+const PAGE_TOKEN = process.env.PAGE_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // ----------------------------------------------------------------------
-// دالة مساعدة لإرسال الردود إلى Messenger
+// 1. Webhook Verify
 // ----------------------------------------------------------------------
-async function callSendAPI(senderPsid, response) {
-    const requestBody = {
-        "recipient": { "id": senderPsid },
-        "message": response
-    };
-
-    try {
-        await axios.post(
-            `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-            requestBody
-        );
-    } catch (error) {
-        console.error("Failed to send message to Facebook:", error.response ? error.response.data : error.message);
+app.get("/webhook", (req, res) => {
+    if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
+        return res.send(req.query["hub.challenge"]);
     }
+    res.send("Error: wrong validation token");
+});
+
+// ----------------------------------------------------------------------
+// 2. Handle Incoming Messages
+// ----------------------------------------------------------------------
+app.post("/webhook", async (req, res) => {
+    try {
+        const entry = req.body.entry?.[0];
+        const event = entry.messaging?.[0];
+        const sender = event.sender.id;
+
+        const text = event.message?.text?.toLowerCase();
+
+        if (text) {
+            await handleUserMessage(sender, text);
+        }
+
+        res.sendStatus(200);
+    } catch (e) {
+        console.log("Webhook Error:", e);
+        res.sendStatus(200);
+    }
+});
+
+// ----------------------------------------------------------------------
+// 3. Router: Detect Anime Name or Episode
+// ----------------------------------------------------------------------
+async function handleUserMessage(sender, text) {
+    const isEpisode = text.match(/(.*)\s+(\d+)$/);
+
+    if (isEpisode) {
+        const name = isEpisode[1].trim().replace(/ /g, "-");
+        const ep = isEpisode[2];
+        await getEpisode(sender, name, ep);
+        return;
+    }
+
+    const slug = text.replace(/ /g, "-");
+    await getAnimeInfo(sender, slug);
 }
 
 // ----------------------------------------------------------------------
-// دالة معالجة منطق Gemini وتحويل JSON إلى رسالة نصية بسيطة للرد
+// 4. Get Anime Info
 // ----------------------------------------------------------------------
-async function handleAnimeRequest(animeName, senderPsid) {
-    if (!GEMINI_API_KEY) {
-        return callSendAPI(senderPsid, { text: "عذراً، مفتاح Gemini API غير موجود." });
-    }
-    
-    // إرسال رسالة "جاري الكتابة..." لتهدئة المستخدم
-    callSendAPI(senderPsid, { sender_action: "typing_on" });
-
+async function getAnimeInfo(sender, slug) {
     try {
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const url = `https://anime3rb.com/titles/${slug}`;
+        const html = await axios.get(url);
+        const $ = cheerio.load(html.data);
 
-        // نطلب من Gemini إنشاء JSON كامل كما طلبته، مع التركيز على اللغة العربية
-        const prompt = `
-        Act as an Anime Database API. I need information for the anime: "${animeName}".
-        Generate a JSON object with the following keys. All text should be in ARABIC, except titles (name, name2) and technical keys (image, url, s, t, id).
-        
-        Required JSON Structure:
-        {
-            "image": "URL of the anime poster (must be a real URL)",
-            "مصدر": "Source (e.g. مانجا)",
-            "c": "Generate a random 10-digit number string",
-            "g": "Genres in Arabic separated by ' / '",
-            "مدة": "Duration per episode in Arabic",
-            "h": "Status . Season Year . AgeRating (e.g., مكتمل . شتاء 2024 . +13)",
-            "ep": "Type in Arabic (e.g., أنمي تلفزيوني)",
-            "url": "A valid link to the anime",
-            "sto": "A detailed story summary in Arabic.",
-            "عدد_حلقات": "Total episodes + حلقة",
-            "s": "Studio Name (English)",
-            "t": "Score out of 10",
-            "name": "Official English Title",
-            "id": "MyAnimeList ID or empty",
-            "name2": "Japanese Title",
-            "fg": "مسلسل"
-        }
-        
-        IMPORTANT: Return ONLY the JSON string. Do not include markdown like \`\`\`json.
-        `;
+        const title = $("meta[property='og:title']").attr("content");
+        const desc = $("meta[property='og:description']").attr("content");
 
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const animeData = JSON.parse(responseText);
+        const rating = $(".text-yellow-500").first().text().trim();
+        const status = $("span:contains('الحالة')").next().text().trim();
+        const studio = $("span:contains('الاستوديو')").next().text().trim();
+        const author = $("span:contains('المؤلف')").next().text().trim();
+        const age = $("span:contains('التصنيف العمري')").next().text().trim();
 
-        // تنسيق الرد إلى نص سهل القراءة في Messenger
-        const replyMessage = 
-            `**${animeData.name}** (${animeData.name2})\n` +
-            `==========================\n` +
-            `📺 التصنيف: ${animeData.g}\n` +
-            `📚 المصدر: ${animeData.مصدر}\n` +
-            `✨ الحالة: ${animeData.h}\n` +
-            `🔢 عدد الحلقات: ${animeData.عدد_حلقات}\n` +
-            `⭐ التقييم: ${animeData.t}/10\n` +
-            `\n` +
-            `📜 القصة:\n` +
-            `${animeData.sto}\n\n` +
-            `🔗 رابط الأنمي: ${animeData.url}`;
-            
-        // إرسال الرد إلى المستخدم
-        callSendAPI(senderPsid, { text: replyMessage });
-        
-        // إرسال الصورة كبطاقة إذا كانت متوفرة (اختياري)
-        if (animeData.image) {
-             callSendAPI(senderPsid, { attachment: {
-                 type: "image",
-                 payload: { url: animeData.image }
-             }});
-        }
-
-    } catch (error) {
-        console.error("Processing Error:", error);
-        callSendAPI(senderPsid, { 
-            text: `عذراً، لم أتمكن من إيجاد معلومات الأنمي "${animeName}" أو حدث خطأ في المعالجة.`
+        await sendMessage(sender, {
+            text: `📌 *${title}*\n\n⭐ التقييم: ${rating}\n📜 القصة: ${desc}\n🎬 الاستوديو: ${studio}\n✍ المؤلف: ${author}\n📅 الحالة: ${status}\n🔞 التصنيف العمري: ${age}`
         });
+
+        await sendButton(sender, "عرض الحلقات", `https://anime3rb.com/titles/${slug}`);
+    } catch (err) {
+        await sendMessage(sender, { text: "❌ لم أستطع العثور على الأنمي" });
     }
 }
 
 // ----------------------------------------------------------------------
-// الدالة الرئيسية لـ Webhook (Vercel Handler)
+// 5. Get Episode Video Sources
 // ----------------------------------------------------------------------
-module.exports = async (req, res) => {
-    
-    // 1. معالجة طلب التحقق (GET Request for Verification)
-    if (req.method === 'GET') {
-        const mode = req.query['hub.mode'];
-        const token = req.query['hub.verify_token'];
-        const challenge = req.query['hub.challenge'];
+async function getEpisode(sender, slug, ep) {
+    try {
+        const url = `https://anime3rb.com/episode/${slug}/${ep}`;
+        const html = await axios.get(url);
+        const data = html.data;
 
-        if (mode && token) {
-            if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-                // النجاح في التحقق
-                return res.status(200).send(challenge);
-            } else {
-                // فشل الرمز
-                return res.status(403).send("Verification token mismatch");
+        const START = 'video_url&quot;:&quot;';
+        const END = '&quot;';
+
+        let i1 = data.indexOf(START);
+        if (i1 === -1) {
+            await sendMessage(sender, { text: "❌ لم أجد رابط المشغل" });
+            return;
+        }
+
+        let start = i1 + START.length;
+        let end = data.indexOf(END, start);
+
+        let encoded = data.substring(start, end)
+            .replace(/\\\//g, "/")
+            .replace(/&amp;/g, "&");
+
+        const playerHTML = await axios.get(encoded);
+        const text2 = playerHTML.data;
+
+        const BLOCK = "var video_sources = ";
+        const b1 = text2.lastIndexOf(BLOCK);
+
+        let results = [];
+
+        if (b1 !== -1) {
+            let jsonPart = text2.substring(b1 + BLOCK.length);
+            jsonPart = jsonPart.split("];")[0] + "]";
+
+            jsonPart = jsonPart.replace(/\\\//g, "/");
+
+            const arr = JSON.parse(jsonPart);
+
+            arr.forEach(v => {
+                results.push({
+                    quality: v.label,
+                    url: v.src
+                });
+            });
+        }
+
+        let msg = "🎥 روابط المشاهدة:\n\n";
+        results.forEach(r => {
+            msg += `💠 *${r.quality}*\n${r.url}\n\n`;
+        });
+
+        await sendMessage(sender, { text: msg });
+
+    } catch (err) {
+        console.log(err);
+        await sendMessage(sender, { text: "❌ حدث خطأ أثناء جلب الحلقة" });
+    }
+}
+
+// ----------------------------------------------------------------------
+// 6. Send Text Message
+// ----------------------------------------------------------------------
+async function sendMessage(sender, payload) {
+    return axios.post(
+        `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_TOKEN}`,
+        {
+            recipient: { id: sender },
+            message: payload
+        }
+    );
+}
+
+// ----------------------------------------------------------------------
+// 7. Send Button
+// ----------------------------------------------------------------------
+async function sendButton(sender, title, url) {
+    return axios.post(
+        `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_TOKEN}`,
+        {
+            recipient: { id: sender },
+            message: {
+                attachment: {
+                    type: "template",
+                    payload: {
+                        template_type: "button",
+                        text: title,
+                        buttons: [
+                            {
+                                type: "web_url",
+                                url: url,
+                                title: "فتح الرابط"
+                            }
+                        ]
+                    }
+                }
             }
         }
-        // إذا لم يكن طلب تحقق، قم بالرد العادي
-        return res.status(200).send("Anime Bot Webhook is running.");
-    }
-    
-    // 2. معالجة رسائل المستخدم (POST Request for Messages)
-    if (req.method === 'POST') {
-        const body = req.body;
-        
-        if (body.object === 'page') {
-            body.entry.forEach(entry => {
-                const webhookEvent = entry.messaging[0];
-                const senderPsid = webhookEvent.sender.id;
+    );
+}
 
-                if (webhookEvent.message && webhookEvent.message.text) {
-                    const receivedText = webhookEvent.message.text.trim();
-                    // تمرير اسم الأنمي لدالة المعالجة
-                    handleAnimeRequest(receivedText, senderPsid);
-                }
-            });
-            
-            // يجب الرد بـ 200 OK فوراً لتجنب Timeout من فيسبوك
-            return res.status(200).send('EVENT_RECEIVED');
-        }
-        return res.status(404).send('Not Found');
-    }
-
-    // الرد على أي طلبات أخرى غير GET/POST
-    res.status(405).send('Method Not Allowed');
-};
+app.listen(3000, () => console.log("BOT Running"));
