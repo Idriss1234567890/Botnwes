@@ -1,8 +1,8 @@
-import express from "express";
-import axios from "axios";
-import * as cheerio from "cheerio";
-import bodyParser from "body-parser";
-import dotenv from "dotenv";
+const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const bodyParser = require('body-parser');
+const dotenv = require('dotenv');
 
 dotenv.config();
 
@@ -13,7 +13,7 @@ const PAGE_TOKEN = process.env.PAGE_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
-// إعدادات طلب Axios لمحاكاة متصفح حقيقي
+// 🛡️ إعدادات طلب Axios لمحاكاة متصفح حقيقي (ضروري لتجنب الحظر)
 const axiosConfig = {
     headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
@@ -40,6 +40,7 @@ app.post("/webhook", async (req, res) => {
         const event = entry?.messaging?.[0];
         const sender = event?.sender?.id;
 
+        // قراءة النص الوارد وتحويله إلى حروف صغيرة مع إزالة الفراغات الزائدة
         const text = event?.message?.text?.trim()?.toLowerCase();
         
         if (text && sender) {
@@ -59,7 +60,7 @@ async function handleUserMessage(sender, text) {
     
     // 1. معالجة أمر 'list'
     if (text === 'list') {
-        await sendMessage(sender, { text: "للبحث عن أنمي، أرسل اسمه بالإنجليزية (مثل: One Piece). \n\nللبحث عن حلقة، أرسل اسم الأنمي متبوعًا برقم الحلقة (مثل: One Piece 3)" });
+        await sendMessage(sender, { text: "للبحث عن أنمي، أرسل اسمه بالإنجليزية (مثال: One Piece).\n\nلطلب حلقة معينة، أرسل اسم الأنمي متبوعًا برقم الحلقة (مثال: One Piece 3)" });
         return;
     }
 
@@ -68,9 +69,9 @@ async function handleUserMessage(sender, text) {
     const episodeMatch = text.match(/^(.*)\s+(\d+)$/);
 
     if (episodeMatch) {
-        // [1] هو اسم الأنمي (قد يحتوي على مسافات)
+        // [1] اسم الأنمي
         const name = episodeMatch[1].trim().replace(/ /g, "-"); 
-        // [2] هو رقم الحلقة
+        // [2] رقم الحلقة
         const ep = episodeMatch[2];
         
         await getEpisode(sender, name, ep);
@@ -78,7 +79,6 @@ async function handleUserMessage(sender, text) {
     }
 
     // 3. معالجة طلب معلومات أنمي (الاسم فقط)
-    // يتم تحويل المسافات إلى شُرط (-) ليصبح slug
     const slug = text.replace(/ /g, "-");
     await getAnimeInfo(sender, slug);
 }
@@ -86,103 +86,89 @@ async function handleUserMessage(sender, text) {
 // ----------------------------------------------------------------------
 // جلب معلومات الأنمي (Get Anime Info)
 async function getAnimeInfo(sender, slug) {
+    const url = `https://anime3rb.com/titles/${slug}`;
+    
     try {
-        const url = `https://anime3rb.com/titles/${slug}`;
-        
-        // إرسال الطلب مع User-Agent
+        // 🚀 إرسال الطلب مع User-Agent
         const html = await axios.get(url, axiosConfig); 
         const $ = cheerio.load(html.data);
         
-        // تأكد من وجود العنوان قبل استكمال الاستخراج
         const title = $("meta[property='og:title']").attr("content");
-        if (!title) {
-             throw new Error("Title not found, likely 404");
+        if (!title || title.includes("Page Not Found")) {
+             throw new Error("Anime not found or 404 page received.");
         }
         
-        const desc = $("meta[property='og:description']").attr("content");
-        const image = $("meta[property='og:image']").attr("content"); // إضافة جلب رابط الصورة
+        const desc = $("meta[property='og:description']").attr("content") || 'لا يوجد وصف متاح.';
+        const image = $("meta[property='og:image']").attr("content"); // جلب رابط الصورة
         
         // جلب البيانات من صفحة الأنمي
-        const rating = $(".text-yellow-500").first().text().trim();
-        const status = $("span:contains('الحالة')").next().text().trim();
-        const studio = $("span:contains('الاستوديو')").next().text().trim();
-        const author = $("span:contains('المؤلف')").next().text().trim();
-        const age = $("span:contains('التصنيف العمري')").next().text().trim();
+        const rating = $(".text-yellow-500").first().text().trim() || 'غير متوفر';
+        const status = $("span:contains('الحالة')").next().text().trim() || 'غير متوفر';
+        const studio = $("span:contains('الاستوديو')").next().text().trim() || 'غير متوفر';
+        const author = $("span:contains('المؤلف')").next().text().trim() || 'غير متوفر';
+        const age = $("span:contains('التصنيف العمري')").next().text().trim() || 'غير متوفر';
 
-        const infoMessage = `
-            📌 *${title}*
-            
-            ${image ? `` : ''}
-            
-            ⭐ التقييم: ${rating}
-            📅 الحالة: ${status}
-            🎬 الاستوديو: ${studio}
-            ✍ المؤلف: ${author}
-            🔞 التصنيف العمري: ${age}
-            
-            📜 القصة:
-            ${desc}
-        `.trim();
+        const infoMessage = 
+            `📌 *${title}* \n\n` + 
+            `⭐ التقييم: ${rating}\n` + 
+            `📅 الحالة: ${status}\n` + 
+            `🎬 الاستوديو: ${studio}\n` + 
+            `✍ المؤلف: ${author}\n` + 
+            `🔞 التصنيف العمري: ${age}\n\n` + 
+            `📜 القصة:\n${desc}`;
 
 
+        // رسالة معلومات الأنمي
         await sendMessage(sender, { text: infoMessage });
 
-        // إرسال زر حلقات تهو
+        // زر مرفق برابط "عرض الحلقات"
         await sendButton(sender, "عرض الحلقات على الموقع", url);
         
     } catch (e) {
         console.error(`Error fetching info for ${slug}:`, e.message);
-        await sendMessage(sender, { text: `❌ لم أستطع العثور على الأنمي باسم: ${slug} أو حدث خطأ. تأكد من إدخال اسم الأنمي بالإنجليزية كما هو في الرابط.` });
+        await sendMessage(sender, { text: `❌ لم أستطع العثور على الأنمي باسم: ${slug}. تأكد من إدخال الاسم الإنجليزي الصحيح.` });
     }
 }
 
 // ----------------------------------------------------------------------
 // جلب روابط الحلقة (Get Episode Links)
 async function getEpisode(sender, slug, ep) {
+    const url = `https://anime3rb.com/episode/${slug}/${ep}`;
+    
     try {
-        const url = `https://anime3rb.com/episode/${slug}/${ep}`;
-        
         // 1. طلب صفحة الحلقة مع User-Agent
         const html = await axios.get(url, axiosConfig);
         const data = html.data;
 
         // 2. استخراج وفك تشفير رابط المشغل
-        // الموقع يستخدم &quot; ترميزاً بدلاً من علامات الاقتباس (")
-        const START = 'video_url&quot;:&quot;';
-        const END = '&quot;';
+        // البحث عن الترميز: video_url&quot;:&quot;
+        const START_MARKER = 'video_url&quot;:&quot;';
+        const END_MARKER = '&quot;';
 
-        let i1 = data.indexOf(START);
+        let i1 = data.indexOf(START_MARKER);
+        
         if (i1 === -1) {
-             // محاولة البحث عن الترميز البديل (في حال تغير الموقع)
-            const START_ALT = 'video_url":"';
-            i1 = data.indexOf(START_ALT);
-            if (i1 === -1) {
-                await sendMessage(sender, { text: "❌ لم أجد رابط المشغل في صفحة الحلقة. تأكد من توفر الحلقة أو قد يكون هناك خطأ في الموقع." });
-                return;
-            }
-            // إذا وجد الترميز البديل، يجب تعديل نقطة البداية والنهاية
-            i1 = i1 + START_ALT.length;
-            end = data.indexOf('"', i1);
-        } else {
-            i1 = i1 + START.length;
-            end = data.indexOf(END, i1);
+             // إذا لم يتم العثور على الترميز، احتمال أن تكون الحلقة غير موجودة
+             throw new Error("Video URL marker not found.");
         }
+        
+        let start = i1 + START_MARKER.length;
+        let end = data.indexOf(END_MARKER, start);
         
         if (end === -1) {
              throw new Error("Could not find end of encoded URL");
         }
         
-        // فك التشفير الأساسي (استبدال السلاش المهربة و &amp;)
-        let encodedURL = data.substring(i1, end)
+        // فك التشفير الأساسي: (استبدال السلاش المهربة و &amp;)
+        let encodedURL = data.substring(start, end)
             .replace(/\\\//g, "/") 
             .replace(/&amp;/g, "&"); 
 
         if (!encodedURL) {
             throw new Error("Encoded URL is empty");
         }
-
+        
         // 3. إرسال طلب إلى رابط المشغل المفكوك
-        // مهم: إرسال الطلب بنفس User-Agent
         const playerHTML = await axios.get(encodedURL, axiosConfig);
         const text2 = playerHTML.data;
 
@@ -194,7 +180,7 @@ async function getEpisode(sender, slug, ep) {
 
         if (b1 !== -1) {
             let jsonPart = text2.substring(b1 + BLOCK.length);
-            // البحث عن نهاية مصفوفة JSON
+            // قطع الجزء الزائد بعد نهاية مصفوفة JSON
             jsonPart = jsonPart.split("];")[0] + "]"; 
 
             // فك تشفير السلاش في JSON
@@ -203,7 +189,6 @@ async function getEpisode(sender, slug, ep) {
             const arr = JSON.parse(jsonPart);
 
             arr.forEach(v => {
-                // التأكد من وجود رابط صالح قبل إضافته
                 if (v.src && v.label) {
                     results.push({
                         quality: v.label,
@@ -218,7 +203,7 @@ async function getEpisode(sender, slug, ep) {
              return;
         }
 
-        let msg = `🎥 روابط مشاهدة *${slug}* - الحلقة *${ep}*:\n\n`;
+        let msg = `🎥 روابط مشاهدة *${slug.replace(/-/g, " ")}* - الحلقة *${ep}*:\n\n`;
         results.forEach(r => {
             msg += `💠 *${r.quality}*:\n${r.url}\n\n`;
         });
@@ -226,24 +211,21 @@ async function getEpisode(sender, slug, ep) {
         // إرسال رسالة بروابط المشاهدة
         await sendMessage(sender, { text: msg });
         
-        // إضافة الزر المطلوب الذي يفتح رابط الحلقة مباشرة على الموقع
+        // زر فتح رابط الحلقة مباشرة على الموقع
         const episodeWebUrl = `https://anime3rb.com/episode/${slug}/${ep}`;
         await sendButton(sender, "مشاهدة الحلقة على الموقع", episodeWebUrl);
 
 
     } catch (err) {
-        console.error(`Error in getEpisode for ${slug}/${ep}:`, err);
-        await sendMessage(sender, { text: "❌ حدث خطأ أثناء جلب الحلقة. قد تكون الحلقة غير موجودة أو هناك مشكلة مؤقتة في الاستخراج." });
+        console.error(`Error in getEpisode for ${slug}/${ep}:`, err.message);
+        await sendMessage(sender, { text: `❌ حدث خطأ أثناء جلب الحلقة رقم ${ep} للأنمي ${slug.replace(/-/g, " ")}. قد تكون الحلقة غير موجودة أو هناك مشكلة في الاستخراج.` });
     }
 }
 
 // ----------------------------------------------------------------------
 // إرسال رسالة نصية (Send Text Message)
 async function sendMessage(sender, payload) {
-    // التأكد من أن العنوان موجود، وإلا ارمي خطأ
-    if (!PAGE_TOKEN) {
-        throw new Error("PAGE_TOKEN is not set in .env file.");
-    }
+    if (!PAGE_TOKEN) throw new Error("PAGE_TOKEN is not set.");
     return axios.post(
         `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_TOKEN}`,
         {
@@ -256,9 +238,7 @@ async function sendMessage(sender, payload) {
 // ----------------------------------------------------------------------
 // إرسال زر مرفق برابط (Send URL Button)
 async function sendButton(sender, title, url) {
-    if (!PAGE_TOKEN) {
-        throw new Error("PAGE_TOKEN is not set in .env file.");
-    }
+    if (!PAGE_TOKEN) throw new Error("PAGE_TOKEN is not set.");
     return axios.post(
         `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_TOKEN}`,
         {
