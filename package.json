@@ -1,10 +1,13 @@
 {
-  "name": "gemini-anime-bot",
+  "name": "messenger-anime-bot",
   "version": "1.0.0",
-  "description": "Full Gemini Anime JSON",
   "main": "index.js",
+  "type": "module",
   "dependencies": {
-    "@google/generative-ai": "^0.1.0",
-    "axios": "^1.6.0" 
+    "express": "latest",
+    "axios": "latest",
+    "cheerio": "latest",
+    "body-parser": "latest",
+    "dotenv": "latest"
   }
 }
