@@ -1,13 +1,16 @@
 {
   "name": "messenger-anime-bot",
   "version": "1.0.0",
+  "description": "Messenger bot for Anime3rb scraping",
   "main": "index.js",
-  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "express": "latest",
-    "axios": "latest",
-    "cheerio": "latest",
-    "body-parser": "latest",
-    "dotenv": "latest"
+    "express": "^4.18.2",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.3.1"
   }
 }
