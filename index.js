@@ -1,6 +1,6 @@
 import express from "express";
 import axios from "axios";
-import cheerio from "cheerio";
+import * as cheerio from "cheerio";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 
@@ -13,8 +13,6 @@ const PAGE_TOKEN = process.env.PAGE_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 // ----------------------------------------------------------------------
-// 1. Webhook Verify
-// ----------------------------------------------------------------------
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === VERIFY_TOKEN) {
         return res.send(req.query["hub.challenge"]);
@@ -22,8 +20,6 @@ app.get("/webhook", (req, res) => {
     res.send("Error: wrong validation token");
 });
 
-// ----------------------------------------------------------------------
-// 2. Handle Incoming Messages
 // ----------------------------------------------------------------------
 app.post("/webhook", async (req, res) => {
     try {
@@ -33,9 +29,7 @@ app.post("/webhook", async (req, res) => {
 
         const text = event.message?.text?.toLowerCase();
 
-        if (text) {
-            await handleUserMessage(sender, text);
-        }
+        if (text) await handleUserMessage(sender, text);
 
         res.sendStatus(200);
     } catch (e) {
@@ -44,8 +38,6 @@ app.post("/webhook", async (req, res) => {
     }
 });
 
-// ----------------------------------------------------------------------
-// 3. Router: Detect Anime Name or Episode
 // ----------------------------------------------------------------------
 async function handleUserMessage(sender, text) {
     const isEpisode = text.match(/(.*)\s+(\d+)$/);
@@ -61,8 +53,6 @@ async function handleUserMessage(sender, text) {
     await getAnimeInfo(sender, slug);
 }
 
-// ----------------------------------------------------------------------
-// 4. Get Anime Info
 // ----------------------------------------------------------------------
 async function getAnimeInfo(sender, slug) {
     try {
@@ -84,13 +74,11 @@ async function getAnimeInfo(sender, slug) {
         });
 
         await sendButton(sender, "عرض الحلقات", `https://anime3rb.com/titles/${slug}`);
-    } catch (err) {
+    } catch {
         await sendMessage(sender, { text: "❌ لم أستطع العثور على الأنمي" });
     }
 }
 
-// ----------------------------------------------------------------------
-// 5. Get Episode Video Sources
 // ----------------------------------------------------------------------
 async function getEpisode(sender, slug, ep) {
     try {
@@ -102,6 +90,7 @@ async function getEpisode(sender, slug, ep) {
         const END = '&quot;';
 
         let i1 = data.indexOf(START);
+
         if (i1 === -1) {
             await sendMessage(sender, { text: "❌ لم أجد رابط المشغل" });
             return;
@@ -110,11 +99,11 @@ async function getEpisode(sender, slug, ep) {
         let start = i1 + START.length;
         let end = data.indexOf(END, start);
 
-        let encoded = data.substring(start, end)
+        let encodedURL = data.substring(start, end)
             .replace(/\\\//g, "/")
             .replace(/&amp;/g, "&");
 
-        const playerHTML = await axios.get(encoded);
+        const playerHTML = await axios.get(encodedURL);
         const text2 = playerHTML.data;
 
         const BLOCK = "var video_sources = ";
@@ -152,8 +141,6 @@ async function getEpisode(sender, slug, ep) {
 }
 
 // ----------------------------------------------------------------------
-// 6. Send Text Message
-// ----------------------------------------------------------------------
 async function sendMessage(sender, payload) {
     return axios.post(
         `https://graph.facebook.com/v17.0/me/messages?access_token=${PAGE_TOKEN}`,
@@ -164,8 +151,6 @@ async function sendMessage(sender, payload) {
     );
 }
 
-// ----------------------------------------------------------------------
-// 7. Send Button
 // ----------------------------------------------------------------------
 async function sendButton(sender, title, url) {
     return axios.post(
